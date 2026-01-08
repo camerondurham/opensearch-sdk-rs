@@ -42,27 +42,69 @@ impl From<&Request> for u8 {
 impl Serialize for Request {
     /// Serialize Request to bytes to send to OpenSearch server
     fn serialize(&self, buf: &mut impl Write) -> io::Result<usize> {
-        // may not be writing this correctly
-        buf.write_u8(self.into())?; // Message type byte
+        let mut bytes_written = 0;
 
-        todo!("Finish implemetnation of serialize")
+        // Write request type byte
+        buf.write_u8(self.into())?;
+        bytes_written += 1;
+
+        // Write the message content (length-prefixed string)
+        let content = match self {
+            Request::RequestResponse(s) => s,
+            Request::TransportError(s) => s,
+            Request::Compress(s) => s,
+            Request::Handshake(s) => s,
+        };
+
+        // Write string length as 4-byte big-endian integer
+        let len = content.len() as u32;
+        buf.write_u32::<NetworkEndian>(len)?;
+        bytes_written += 4;
+
+        // Write string bytes
+        buf.write_all(content.as_bytes())?;
+        bytes_written += content.len();
+
+        Ok(bytes_written)
     }
 }
 
 impl Deserialize for Request {
     type Output = Request;
 
-    /// Deserialize Request from bytes ( to receive from TcpStream)
+    /// Deserialize Request from bytes (to receive from TcpStream)
     fn deserialize(buf: &mut impl Read) -> io::Result<Self::Output> {
-        let mut buf_reader = BufReader::new(buf);
-        let mut parse_location: usize = 0;
-        let mut buffer: Vec<u8> = Vec::new();
+        // Read request type byte
+        let request_type = buf.read_u8()?;
 
-        todo!();
-        // match buf.read_u8()? {
-        //     Ok(_) => {
-        //     },
-        //     _ => Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid Request Header Bytes"))
-        // }
+        // Read string length (4-byte big-endian)
+        let length = buf.read_u32::<NetworkEndian>()?;
+
+        // Read string content
+        let mut content_bytes = vec![0u8; length as usize];
+        buf.read_exact(&mut content_bytes)?;
+
+        let content = String::from_utf8(content_bytes).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Invalid UTF-8 in request content: {}", e),
+            )
+        })?;
+
+        // Match request type byte to enum variant
+        let request = match request_type {
+            t if t == (1 << 0) => Request::RequestResponse(content),
+            t if t == (1 << 1) => Request::TransportError(content),
+            t if t == (1 << 2) => Request::Compress(content),
+            t if t == (1 << 3) => Request::Handshake(content),
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Invalid request type byte: {}", request_type),
+                ))
+            }
+        };
+
+        Ok(request)
     }
 }
