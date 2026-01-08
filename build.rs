@@ -4,7 +4,7 @@ fn main() -> Result<()> {
         &[
             "src/ExtensionIdentityProto.proto",
             "src/ExtensionRequestProto.proto",
-            "src/ExtensionIdentityProto.proto",
+            "src/RegisterRestActionsProto.proto",
         ],
         &["src/"],
     )?;
