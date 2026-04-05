@@ -58,10 +58,10 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Run fast test suite
+      - name: Run fast unit and bin tests
         env:
           OPENSEARCH_DIR: ${{ github.workspace }}/OpenSearch
-        run: nix develop --command bash -lc "cargo test"
+        run: nix develop --command bash -lc "cargo test --lib --bins"
 
       - name: Run live OpenSearch hello harness
         env:
