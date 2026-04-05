@@ -1,238 +1,96 @@
 # Next Steps for OpenSearch SDK Rust
 
-This document outlines the planned development steps to complete the OpenSearch Extension SDK implementation in Rust.
+This crate now targets the OpenSearch 3.x extension protocol directly rather than the older header-only prototype.
 
 ## Current Status
 
-**Completed (Priority 1):**
-- ✅ Development environment setup (Nix flake with all dependencies)
-- ✅ Basic TCP header parsing for OpenSearch transport protocol
-- ✅ Proto files for extension identity, requests, and REST actions
-- ✅ CI/CD workflows (cargo check and test)
-- ✅ Basic server listening on port 1234
-- ✅ Handshake detection in transport layer
-- ✅ Fixed build.rs duplicate proto file issue
-- ✅ Added development documentation to README
+Implemented now:
+- std-only transport codec for OpenSearch extension frames
+- thread-context and variable-header parsing
+- TCP and transport handshake responses
+- extension init flow modeled after `opensearch-sdk-py`
+- outbound `registerrestactions` and `enviornmentsettings` requests
+- minimal Rust extension API with route registration and handler dispatch
+- hello-world standalone extension binary
+- repeatable `scripts/live_hello.sh` harness for building the local OpenSearch `no-jdk-linux-tar`, starting the Rust extension, initializing it, and probing the hello-world route
+- ignored cargo integration test that delegates to the live hello harness
+- unit tests covering framing, request/response payloads, route matching, and the REST-first init sequence
 
-**What Works:**
-- Transport header parsing (prefix, size, request_id, status, version, variable_header_size)
-- Handshake detection via status flags
-- Basic server socket listening
+Deliberately not implemented yet:
+- custom settings registration
+- transport actions
+- extension-to-extension actions
+- cargo-native source-backed OpenSearch integration test harness
+- richer route extraction and request body/media-type coverage
 
-**Known Issues:**
-- ❌ Incomplete serialization/deserialization in `src/interface.rs:48` and `src/interface.rs:61`
-- ❌ No handshake response implementation in `src/main.rs:64-66`
-- ❌ No message body parsing beyond headers
-- ❌ No variable header parsing
-- ❌ No actual extension functionality (REST handlers, etc.)
-- ❌ No tests implemented
+## Near-Term Priorities
 
-## Priority 2: Complete Core Transport Protocol
+### 1. Broaden Wire Compatibility
+- Validate request/response codecs against additional OpenSearch 3.x payloads beyond the hello-world GET path.
+- Add support for request bodies with media types instead of assuming the GET-style no-body case.
+- Add explicit error responses for unsupported actions and malformed payloads.
 
-### 2.1 Implement Variable Header Parsing
-**Location:** `src/transport.rs`
+### 2. Fill Out the 3.x Extension Contract
+- Add custom settings registration and settings update handling.
+- Add environment settings response parsing instead of treating the payload as opaque.
+- Add dependency lookup and cluster-state requests where the server contract already exists in `OpenSearch`.
 
-Currently only fixed headers are parsed. Need to parse variable-length headers that follow the fixed header:
-- Thread context headers
-- Feature flags
-- Any custom headers
+### 3. Improve the Rust SDK Surface
+- Expose a cleaner public API for extension metadata, route registration, and lifecycle hooks.
+- Support path-param extraction and helper response builders.
+- Add examples beyond hello-world, especially multi-route and settings-aware extensions.
 
-**References:**
-- [Python SDK: async_extension_host.py#L48](https://github.com/opensearch-project/opensearch-sdk-py/blob/fbfbeef4d0dffbd6ecea32959ab4df5c1bf34431/src/opensearch_sdk_py/server/async_extension_host.py#L48)
-- [Python SDK: tcp_header.py](https://github.com/opensearch-project/opensearch-sdk-py/blob/main/src/opensearch_sdk_py/transport/tcp_header.py)
+## Next Agent Handoff
 
-**Tasks:**
-- [ ] Define structure for variable headers
-- [ ] Implement parsing after fixed header
-- [ ] Handle thread context headers
-- [ ] Add tests for variable header parsing
+The next agent should assume the crate is at this state:
+- `cargo test` passes locally.
+- The crate no longer depends on `prost`, `tokio`, `byteorder`, or `nom`.
+- `./scripts/live_hello.sh` succeeds against the local `/home/nixos/opensearch-project/OpenSearch` source tree.
+- `cargo test --test live_hello -- --ignored --nocapture` is now the cargo-visible entrypoint for that same live harness.
+- The old `justfile` OpenSearch Docker helpers are stale for this work because they still target 2.x images.
 
-### 2.2 Implement Handshake Response
-**Location:** `src/main.rs:64-66`
+Primary code paths to understand first:
+- `src/host.rs`: runtime state machine for handshakes, init flow, and REST dispatch
+- `src/transport.rs`: wire codec, OpenSearch payload types, and protobuf byte builders
+- `src/extension.rs`: minimal Rust extension API
+- `src/main.rs`: hello-world standalone extension entrypoint
 
-Complete the TODO for handshake handling:
-```rust
-if h.is_handshake() {
-    // TODO: actually handle this case
-}
-```
+Recommended next execution sequence:
+1. Confirm the current crate still passes with `cargo test`.
+2. Run `cargo test --test live_hello -- --ignored --nocapture` from `opensearch-sdk-rs` when touching transport or host flow.
+3. If that fails, inspect `.tmp/live-hello/logs/extension.log` and `.tmp/live-hello/logs/opensearch.log` and reconcile the Rust codec with the live bytes before broadening scope.
+4. Extend coverage beyond the GET no-body path once the live harness remains stable.
 
-**Tasks:**
-- [ ] Study OpenSearch handshake protocol
-- [ ] Create handshake response message
-- [ ] Serialize and send response back to OpenSearch
-- [ ] Parse handshake request body (extension identity)
-- [ ] Add handshake state tracking
+Minimum acceptance criteria for the next agent:
+- OpenSearch successfully initializes the Rust extension without timing out.
+- The Rust process observes the expected sequence:
+  `internal:tcp/handshake`
+  `internal:transport/handshake`
+  `internal:discovery/extensions`
+  outbound `internal:discovery/registerrestactions`
+  outbound `internal:discovery/enviornmentsettings`
+  inbound `internal:extensions/restexecuteonextensiontaction`
+- The hello-world endpoint returns the Rust response body through OpenSearch.
 
-**References:**
-- [Java SDK: CREATE_YOUR_FIRST_EXTENSION.md](https://github.com/opensearch-project/opensearch-sdk-java/blob/main/CREATE_YOUR_FIRST_EXTENSION.md)
-- [Python SDK: Extension class](https://github.com/opensearch-project/opensearch-sdk-py/blob/main/src/opensearch_sdk_py/extension.py)
+Most likely breakpoints during live testing:
+- stream encoding mismatches in `DiscoveryNode` / `DiscoveryExtensionNode`
+- request/response body layout mismatches around `InitializeExtensionRequest`
+- `ExtensionRestRequest` field ordering or byte-array framing mismatches
+- assumptions about `Version::min_compat()` versus what the running OpenSearch build actually sends
+- missing handling for non-empty environment-settings payloads
+- request-body/media-type handling for non-GET REST routes
 
-### 2.3 Complete Serialization/Deserialization
-**Location:** `src/interface.rs`
+If the live harness remains green, the next work item should be:
+- broaden it beyond the GET no-body path with a request-body/media-type exercise and explicit unsupported-action/error coverage
 
-Finish implementing the `Serialize` and `Deserialize` traits:
-- Complete `Request::serialize` at line 48
-- Complete `Request::deserialize` at line 61
+If live initialization fails, the next work item should be:
+- use the existing `OPENSEARCH_SDK_RS_TRACE=1` frame logging plus the saved harness logs to reconcile the Rust codec with the actual OpenSearch bytes before expanding feature scope
 
-**Tasks:**
-- [ ] Implement full serialization for Request types
-- [ ] Implement full deserialization for Request types
-- [ ] Add proper error handling
-- [ ] Consider using serde instead of custom traits (see TODO at line 3)
-- [ ] Write unit tests for serialization round-trips
+## Out of Scope for the First POC
 
-### 2.4 Add Message Body Parsing
-**Location:** New module or extend `src/transport.rs`
+These should not block the first fully decoupled extension proof:
+- Java-SDK-style plugin migration interfaces such as analysis, search, mapper, repository, or ingest extension surfaces
+- dependency injection or component factories
+- async runtime migration
 
-After headers are parsed, parse the protobuf message bodies:
-- ExtensionIdentity messages
-- ExtensionRequest messages
-- RegisterRestActions messages
-
-**Tasks:**
-- [ ] Use generated protobuf code from build.rs
-- [ ] Parse message bodies after headers
-- [ ] Create message routing based on request type
-- [ ] Handle different message types appropriately
-
-## Priority 3: Basic Extension Functionality
-
-### 3.1 Implement Extension Initialization Handshake
-**Location:** New module `src/handshake.rs` or extend `src/main.rs`
-
-Implement full bidirectional handshake protocol:
-1. Receive handshake request from OpenSearch
-2. Parse extension identity
-3. Send handshake response
-4. Wait for acknowledgment
-
-**Tasks:**
-- [ ] Create handshake state machine
-- [ ] Implement request/response flow
-- [ ] Handle handshake errors
-- [ ] Add timeout handling
-- [ ] Log handshake progress
-
-### 3.2 Add REST Action Registration
-**Location:** New module `src/rest.rs`
-
-Use `RegisterRestActionsProto.proto` to register REST endpoints with OpenSearch:
-
-**Tasks:**
-- [ ] Create REST action registry
-- [ ] Build RegisterRestActions message
-- [ ] Send registration request to OpenSearch
-- [ ] Handle registration response
-- [ ] Map REST routes to handlers
-
-**References:**
-- `examples/hello/hello.json` - example extension config
-- [Java SDK REST examples](https://github.com/opensearch-project/opensearch-sdk-java/blob/main/CREATE_YOUR_FIRST_EXTENSION.md)
-
-### 3.3 Create "Hello World" REST Handler
-**Location:** New module `src/handlers.rs`
-
-Implement the endpoint referenced in `examples/hello/hello.json`:
-
-**Tasks:**
-- [ ] Create handler trait/interface
-- [ ] Implement basic "hello world" handler
-- [ ] Parse incoming REST requests
-- [ ] Build REST responses
-- [ ] Connect handler to REST action registration
-- [ ] Test with: `curl -ku "admin:$PASS" -XGET "https://localhost:9200/_extensions/_hello-world-rs/hello"`
-
-### 3.4 Async/Tokio Integration
-**Location:** Throughout codebase
-
-Currently uses blocking I/O. Integrate Tokio properly:
-
-**Tasks:**
-- [ ] Convert main server loop to async
-- [ ] Use tokio::net::TcpListener instead of std::net::TcpListener
-- [ ] Add async handlers
-- [ ] Handle concurrent connections
-- [ ] Add connection pooling if needed
-
-## Priority 4: Testing & Documentation
-
-### 4.1 Write Unit Tests
-**Location:** Test modules in each source file
-
-**Tasks:**
-- [ ] Test header parsing with various inputs
-- [ ] Test serialization/deserialization round-trips
-- [ ] Test handshake state machine
-- [ ] Test message routing
-- [ ] Test error conditions
-- [ ] Add property-based tests for serialization
-
-### 4.2 Write Integration Tests
-**Location:** `tests/` directory
-
-**Tasks:**
-- [ ] Create test fixtures with mock OpenSearch messages
-- [ ] Test full handshake flow
-- [ ] Test REST action registration
-- [ ] Test extension initialization
-- [ ] Set up test against actual OpenSearch instance (using Docker)
-- [ ] Add CI integration test job
-
-### 4.3 Add Examples
-**Location:** `examples/` directory
-
-**Tasks:**
-- [ ] Complete hello-world example
-- [ ] Add example with multiple REST endpoints
-- [ ] Add example with custom transport actions
-- [ ] Add example with settings registration
-- [ ] Document how to run each example
-
-### 4.4 Expand Documentation
-
-**Tasks:**
-- [ ] Expand `DEVELOPMENT_NOTES.md` with protocol learnings
-- [ ] Document architecture decisions
-- [ ] Add API documentation (cargo doc)
-- [ ] Create architecture diagrams
-- [ ] Document OpenSearch setup for development
-- [ ] Add troubleshooting guide
-- [ ] Document extension deployment
-
-## Future Enhancements (Post-MVP)
-
-### Error Handling
-- [ ] Comprehensive error types
-- [ ] Error recovery strategies
-- [ ] Graceful shutdown handling
-
-### Advanced Features
-- [ ] Settings registration (REQUEST_EXTENSION_REGISTER_SETTINGS)
-- [ ] Cluster state access (REQUEST_EXTENSION_CLUSTER_STATE)
-- [ ] Environment settings (REQUEST_EXTENSION_ENVIRONMENT_SETTINGS)
-- [ ] Dependency information (REQUEST_EXTENSION_DEPENDENCY_INFORMATION)
-- [ ] Component creation (CREATE_COMPONENT)
-- [ ] Index module hooks (ON_INDEX_MODULE)
-
-### Performance
-- [ ] Connection pooling
-- [ ] Message batching
-- [ ] Zero-copy optimizations
-- [ ] Benchmarking suite
-
-### Observability
-- [ ] Structured logging
-- [ ] Metrics collection
-- [ ] Tracing integration
-- [ ] Health check endpoint
-
-## References
-
-- [OpenSearch Extensions Blog](https://opensearch.org/blog/introducing-extensions-for-opensearch)
-- [Python SDK](https://github.com/opensearch-project/opensearch-sdk-py)
-- [Java SDK](https://github.com/opensearch-project/opensearch-sdk-java)
-- [Java SDK Developer Guide](https://github.com/opensearch-project/opensearch-sdk-java/blob/main/DEVELOPER_GUIDE.md)
-- [Creating Your First Extension](https://github.com/opensearch-project/opensearch-sdk-java/blob/main/CREATE_YOUR_FIRST_EXTENSION.md)
-- [CRUD Extension Example](https://github.com/dbwiddis/CRUDExtension)
-- [OpenSearch Extensions Video](https://www.youtube.com/watch?v=TZy7ViZbbHc)
+Those belong after the Rust SDK is proven against the current 3.x extension protocol.
