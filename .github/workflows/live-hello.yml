@@ -50,20 +50,15 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - name: Install Nix
-        uses: cachix/install-nix-action@v27
-        with:
-          nix_path: nixpkgs=channel:nixos-unstable
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run fast unit and bin tests
         env:
           OPENSEARCH_DIR: ${{ github.workspace }}/OpenSearch
-        run: nix develop --command bash -lc "cargo test --lib --bins"
+        run: cargo test --lib --bins
 
       - name: Run live OpenSearch hello harness
         env:
           OPENSEARCH_DIR: ${{ github.workspace }}/OpenSearch
-        run: nix develop --command bash -lc "cargo test --test live_hello -- --ignored --nocapture"
+        run: cargo test --test live_hello -- --ignored --nocapture
