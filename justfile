@@ -13,6 +13,12 @@ test:
 run:
 	cargo run
 
+live_hello:
+	./scripts/live_hello.sh
+
+test_live_hello:
+	cargo test --test live_hello -- --ignored --nocapture
+
 fmt:
 	cargo fmt --all
 	nix fmt .
